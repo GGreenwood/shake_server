@@ -127,8 +127,7 @@ pg.connect(conString, function(err, client, done) {
                     });
                 });
 
-                //res.json(theatres);
-                res.json(body);
+                res.json(theatres);
             }
         });
     });
