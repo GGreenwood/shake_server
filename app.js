@@ -13,6 +13,15 @@ var io = require('socket.io')(http);
 var request = require('request');
 var moment = require('moment');
 
+var yelp = require("node-yelp").createClient({
+    oauth: {
+        consumer_key: "1uRqjHGY40Uf8AmXuvqM5w", 
+        consumer_secret: "qK13smor29qWOapHS_LJNxTA1Bk",
+        token: "IlRSORjw8EkAeEj2AF8WEuivmqbwv3kG",
+        token_secret: "4uttsXxopIcBvSJoEd3cmKOtFPA"
+    }
+});
+
 var rotten_url = "http://api.rottentomatoes.com/api/public/v1.0/lists/movies/opening.json?limit=16&country=us"
 var rotten_api_key = "fwb4ugwu5hwajyaj75qubcqz"
 
@@ -44,10 +53,11 @@ var activities = [
     {
         name: "DINING",
         options: [
-            {name: "BREAKFAST", method: "unimplemented", provider: "none"},
-            {name: "LUNCH", method: "unimplemented", provider: "none"},
-            {name: "DINNER", method: "unimplemented", provider: "none"},
-            {name: "COFFEE", method: "unimplemented", provider: "none"}
+            {name: "BREAKFAST", method: "breakfast", provider: "Yelp"},
+            {name: "LUNCH", method: "lunch", provider: "Yelp"},
+            {name: "DINNER", method: "dinner", provider: "Yelp"},
+            {name: "COFFEE", method: "coffee", provider: "Yelp"},
+            {name: "ALL_FOOD", method: "all_food", provider: "Yelp"}
         ]
     }, 
     {
@@ -74,7 +84,13 @@ var activities = [
             {name: "BASKETBALL", method: "unimplemented", provider: "none"},
             {name: "SOCCER", method: "unimplemented", provider: "none"}
         ]
-    } 
+    },
+    {
+        name: "RANDOM",
+        options: [
+            {name: "RANDOM", method: "random", provider: "none"}
+        ]
+    }
 ];
 
 
@@ -90,7 +106,6 @@ pg.connect(conString, function(err, client, done) {
 
     app.get('/fb_reg/:fb_id/:name/:email', function(req, res, next){
         var fb_id = req.params["fb_id"];
-        logQuery(fb_id, "fb_reg", "Facebook");
 
         var name = req.params["name"];
         var email = req.params["email"];
@@ -99,21 +114,57 @@ pg.connect(conString, function(err, client, done) {
             text: "SELECT COUNT (id) FROM users WHERE fb_id = $1;",
             values: [fb_id]
         }, function(err, result) {
+            var id;
             if(result.rows[0].count == '0') {
                 client.query({
                     text: "INSERT INTO users (fb_id, name, email) VALUES ($1, $2, $3) RETURNING id;",
                     values: [fb_id, name, email]
                 }, function(err, result) {
-                    res.json(result.rows[0].id);
+                    id = result.rows[0].id;
                 });
             } else {
                 client.query({
                     text: "SELECT id FROM users WHERE fb_id = $1 LIMIT 1;",
                     values: [fb_id]
                 }, function(err, result) {
-                    res.json(result.rows[0].id);
+                    id = result.rows[0].id;
                 });
             }
+
+            logQuery(id, "REGISTRATION", "Facebook");
+            res.json(id);
+        });
+    });
+
+    app.get('/weather/:lat/:long', function(req, res, next) {
+        var lat = req.params["lat"];
+        var long = req.params["long"];
+
+        var state = "TX";
+
+        getCity(lat + ',' + long, function(city) {
+            var params = {};
+            
+            request({
+                url: weather_url + state + "/" + city + ".json",
+                json: true,
+                qs: params
+            }, function (error, response, body) {
+                if (!error && response.statusCode === 200) {
+                    weather = {
+                        high: body.forecast.simpleforecast.forecastday[0].high.fahrenheit,
+                        low: body.forecast.simpleforecast.forecastday[0].low.fahrenheit,
+                        precip: body.forecast.simpleforecast.forecastday[0].pop,
+                        conditions: body.forecast.simpleforecast.forecastday[0].conditions
+                    }
+
+                    if(weather.precip > 50 || weather.high < 40)
+                        res.json({results: false});
+
+                    res.json({results: true});
+
+                }
+            });
         });
     });
 
@@ -130,7 +181,7 @@ pg.connect(conString, function(err, client, done) {
         logQuery(fb_id, activity.name, activity.provider);
 
         methods[activity.method](lat, long, 10, function(response) {
-            res.json(response);
+            res.json({results: response});
         });
 
     });
@@ -156,7 +207,7 @@ pg.connect(conString, function(err, client, done) {
                         poster: entry.posters.thumbnail,
                         runtime: entry.runtime,
                         rating_mpaa: entry.mpaa_rating,
-                        rating_rotten: entry.ratings.critics_rating
+                        rating_rotten: entry.ratings.critics_score
                     });
                 });
                 callback(movies);
@@ -231,36 +282,41 @@ pg.connect(conString, function(err, client, done) {
         });
     }
 
-    methods["weather"] = function (lat, long, limit, callback) {
-        var state = req.params["state"];
-        var city = req.params["city"];
 
-        var params = {};
-        
-        request({
-            url: weather_url + state + "/" + city + ".json",
-            json: true,
-            qs: params
-        }, function (error, response, body) {
-            if (!error && response.statusCode === 200) {
-                weather = {
-                    high: body.forecast.simpleforecast.forecastday[0].high.fahrenheit,
-                    low: body.forecast.simpleforecast.forecastday[0].low.fahrenheit,
-                    precip: body.forecast.simpleforecast.forecastday[0].pop,
-                    conditions: body.forecast.simpleforecast.forecastday[0].conditions
-                }
 
-                callback(weather);
-            }
-        });
+    methods["dinner"] = function (lat, long, limit, callback) {
+        yelpSearch("dinner", lat, long, callback, foodFormatter);
+    }
+    methods["lunch"] = function (lat, long, limit, callback) {
+        yelpSearch("lunch", lat, long, callback, foodFormatter);
+    }
+    methods["coffee"] = function (lat, long, limit, callback) {
+        yelpSearch("coffee", lat, long, callback, foodFormatter);
+    }
+    methods["breakfast"] = function (lat, long, limit, callback) {
+        yelpSearch("breakfast", lat, long, callback, foodFormatter);
+    }
+    methods["all_food"] = function (lat, long, limit, callback) {
+        yelpSearch("food", lat, long, callback, foodFormatter);
     }
 
-    methods["destinations"] = function (lat, long, limit, callback) {
+    methods["flights"] = function (lat, long, limit, callback) {
+        return getDestinations(lat, long, limit, callback);
+    }
+
+    methods["random"] = function(lat, long, limit, callback) {
+        var choices = ["dinner", "lunch", "coffee", "breakfast", "flights"];
+        var choice = choices[Math.floor(Math.random() * choices.length)]; 
+
+        methods[choice](lat, long, limit, callback);
+    }
+
+    function getDestinations(lat, long, limit, callback) {
         origin = "DFW";
 
         var params = {
             origin: origin,
-            topdestinations: limit
+            topdestinations: 1 // limit
         };
         
         request({
@@ -273,30 +329,26 @@ pg.connect(conString, function(err, client, done) {
             }
         }, function (error, response, body) {
             if (!error && response.statusCode === 200) {
-                destinations = [];
+                var name = body.Destinations[0].Destination.CityName;
+                if(name == undefined)
+                    name = body.Destinations[0].Destination.MetropolitanAreaName;
 
-                body["Destinations"].forEach(function(destination) {
-                    var name = destination.Destination.CityName;
-                    if(name == undefined)
-                        name = destination.Destination.MetropolitanAreaName;
+                var dest = body.Destinations[0].Destination.DestinationLocation;
 
-                    destinations.push({
-                        name: name,
-                        code: destination.Destination.DestinationLocation
-                    })
+                prices(origin, dest, function(flight) {
+                    callback({origin: name, dest: dest, price: flight.LowestFare});
                 });
-                callback(destinations);
+
+
             }
         });
     }
 
     function prices(origin, dest, callback) {
-        var dest = req.params["dest"];
-
         var params = {
             origin: origin,
             destination: dest,
-            lengthofstay: "1,2,3,4,5"
+            lengthofstay: "2"
         };
         
         request({
@@ -309,7 +361,62 @@ pg.connect(conString, function(err, client, done) {
             }
         }, function (error, response, body) {
             if (!error && response.statusCode === 200) {
-                callback(body);
+                callback(body.FareInfo[0]);
+            }
+        });
+    }
+
+    function yelpSearch(terms, lat, long, callback, formatter) {
+        getAddress(lat + ',' + long, function(address) {
+            yelp.search({
+                terms: terms,
+                location: address
+            }).then(function(data) {
+                callback(formatter(data));
+            }).catch(function (err) {
+                console.log(err)
+            });
+        });
+    }
+
+    function foodFormatter(data) {
+        results = [];
+
+        for(var i = 0; i < 10; i++) {
+            var entry = data.businesses[i];
+            try {
+            results.push({
+                name: entry.name,
+                image: entry.snippet_image_url,
+                phone: entry.phone,
+                address: entry.location.address,
+                rating: entry.rating
+            });
+            } catch(err) {
+                console.log(err);
+            }
+        }
+        return results;
+    }
+
+
+    function getAddress(latLong, callback) {
+        var params = {
+            latlng: latLong,
+            sensor: false,
+            key: google_api_key
+        };
+        
+        request({
+            url: geocode_url,
+            json: true,
+            qs: params
+        }, function (error, response, body) {
+            io.sockets.emit('test', response);
+            if (!error && response.statusCode === 200 && body.status == "OK") {
+                callback(body.results[0].formatted_address);
+            } else {
+                callback("Dallas");
             }
         });
     }
@@ -353,8 +460,8 @@ pg.connect(conString, function(err, client, done) {
             });
         });
 
-        socket.on('getCity', function(latLong) {
-            getCity(latLong, function(data) {console.log(data);});
+        socket.on('getAddress', function(latLong) {
+            getAddress(latLong, function(data) {console.log(data);});
         });
 
     });
@@ -363,7 +470,7 @@ pg.connect(conString, function(err, client, done) {
         var logString = query + " accessed by user " + id;
         logMessage(logString);
         client.query({
-            text: "INSERT INTO queries (fb_id, query, provider) VALUES ($1, $2, $3)",
+            text: "INSERT INTO queries (user_id, query, provider) VALUES ($1, $2, $3)",
             values: [id, query, provider]
         }, function(err, result) {
             if(err) {
