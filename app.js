@@ -98,6 +98,38 @@ pg.connect(conString, function(err, client, done) {
         });
     });
         
+    app.get('/airports/:id/:location/:distance', function(req, res, next) {
+        var location = req.params["location"];
+        var radius = req.params["distance"];
+
+        var params = {
+            "country": "us",
+            "key": places_api_key,
+            "location": location,
+            "radius": radius,
+            "types": "airport"
+        };
+        
+        request({
+            url: places_url,
+            json: true,
+            qs: params
+        }, function (error, response, body) {
+            if (!error && response.statusCode === 200) {
+                //var entries = body["movies"]
+                airports = []
+
+                body["results"].forEach(function(airport) {
+                    airports.push({
+                        name: airport.name,
+                        address: airport.vicinity
+                    });
+                });
+
+                res.json(body);
+            }
+        });
+    });
     app.get('/weather/:id/:state/:city', function(req, res, next) {
         var state = req.params["state"];
         var city = req.params["city"];
@@ -118,6 +150,42 @@ pg.connect(conString, function(err, client, done) {
                 }
 
                 res.json(weather);
+            }
+        });
+    });
+
+    app.get('/destinations/:id/:origin/:limit', function(req, res, next) {
+        var origin = req.params["origin"];
+        var limit = req.params["limit"];
+
+        var params = {
+            origin: origin,
+            topdestinations: limit
+        };
+        
+        request({
+            url: "https://api.test.sabre.com/v1/lists/top/destinations",
+            json: true,
+            qs: params,
+            headers: {
+                'Authorization': "Bearer Shared/IDL:IceSess\/SessMgr:1\.0.IDL/Common/!ICESMS\/ACPCRTD!ICESMSLB\/CRT.LB!-0123456789012345678!123456!0!ABCDEFGHIJKLM!E2E-1",
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        }, function (error, response, body) {
+            if (!error && response.statusCode === 200) {
+                destinations = [];
+
+                body["Destinations"].forEach(function(destination) {
+                    var name = destination.Destination.CityName;
+                    if(name == undefined)
+                        name = destination.Destination.MetropolitanAreaName;
+
+                    destinations.push({
+                        name: name,
+                        code: destination.Destination.DestinationLocation
+                    })
+                });
+                res.json(destinations);
             }
         });
     });
