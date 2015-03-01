@@ -10,6 +10,9 @@ app.use(cors());
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
 
+http.listen(8080);
+app.use(express.static(__dirname + "/startbootstrap-sb-admin-2/"));
+
 var request = require('request');
 var moment = require('moment');
 
@@ -93,6 +96,18 @@ var activities = [
     }
 ];
 
+/*
+var analytics = [
+    "AIRPORT",
+    "BREAKFAST",
+    "LUNCH",
+    "DINNER",
+    "COFFEE",
+    "ALL_FOOD",
+    "MOVIES"
+]
+*/
+var analytics = ["MOVIES"];
 
 console.log("Starting server");
 
@@ -114,13 +129,15 @@ pg.connect(conString, function(err, client, done) {
             text: "SELECT COUNT (id) FROM users WHERE fb_id = $1;",
             values: [fb_id]
         }, function(err, result) {
-            var id;
+            var id = 0;
             if(result.rows[0].count == '0') {
                 client.query({
                     text: "INSERT INTO users (fb_id, name, email) VALUES ($1, $2, $3) RETURNING id;",
                     values: [fb_id, name, email]
                 }, function(err, result) {
                     id = result.rows[0].id;
+                    logQuery(id, "REGISTRATION", "Facebook");
+                    res.json(id);
                 });
             } else {
                 client.query({
@@ -128,11 +145,11 @@ pg.connect(conString, function(err, client, done) {
                     values: [fb_id]
                 }, function(err, result) {
                     id = result.rows[0].id;
+                    logQuery(id, "REGISTRATION", "Facebook");
+                    res.json(id);
                 });
             }
 
-            logQuery(id, "REGISTRATION", "Facebook");
-            res.json(id);
         });
     });
 
@@ -385,13 +402,13 @@ pg.connect(conString, function(err, client, done) {
         for(var i = 0; i < 10; i++) {
             var entry = data.businesses[i];
             try {
-            results.push({
-                name: entry.name,
-                image: entry.snippet_image_url,
-                phone: entry.phone,
-                address: entry.location.address,
-                rating: entry.rating
-            });
+                results.push({
+                    name: entry.name,
+                    image: entry.image_url,
+                    phone: entry.phone,
+                    address: entry.location.address,
+                    rating: entry.rating
+                });
             } catch(err) {
                 console.log(err);
             }
@@ -442,6 +459,30 @@ pg.connect(conString, function(err, client, done) {
             }
         });
     }
+
+    app.get('/analytics/', function(req, res, next) {
+        for(var str = 0; str < analytics.length; str++) {
+
+            var d1 = new Date();
+            var d2 = new Date();
+            d1.setMonth(d1.getMonth() - 1);
+
+            for(var i = 0; i < 10; i++) {
+                (function(d1, d2) {
+                    client.query({
+                        text: "SELECT COUNT (*) FROM queries WHERE timestamp BETWEEN $1 AND $2 AND query='MOVIES';",
+                        values: [d1, d2]//, analytics[str]]
+                    }, function(err, result) {
+                        console.log(result);
+                    });
+                }) (d1, d2);
+
+                d1.setMonth(d1.getMonth() - 1);
+                d2.setMonth(d2.getMonth() - 1);
+            }
+        }
+    });
+
 
     app.listen(80, function(){
         logMessage('CORS-enabled web server listening on port 80');

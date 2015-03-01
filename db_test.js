@@ -16,31 +16,29 @@ var moment = require('moment');
 
 console.log("Starting server");
 
-var socketPool = [];
 
 pg.connect(conString, function(err, client, done) {
     if(err) {
         return console.error('error fetching client from pool', err);
     }
-    logMessage("Connected to db");
-function randomDate(start, end) {
-    return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
-}
- app.get('/insert_data/:type', function(req, res, next){
-    for(var a = 50; a <1050; a++)
- {
-    var face_id = "102039999999999"+ a.toString();
-    var name_test = "test"+ a.toString();
-    var email_test = "test"+ a.toString()+"@gmail.com";
-    client.query(
-            'INSERT into users (id, fb_id, name, email) VALUES($1, $2, $3, $4)', 
-            [a, face_id ,name_test,email_test], 
-            function(err, result) {
-               
-            });
- }
+    console.log("Connected to db");
+    function randomDate(start, end) {
+        return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+    }
+        for(var a = 50; a <1050; a++)
+     {
+        var face_id = "102039999999999"+ a.toString();
+        var name_test = "test"+ a.toString();
+        var email_test = "test"+ a.toString()+"@gmail.com";
+        client.query(
+                'INSERT into users (id, fb_id, name, email) VALUES($1, $2, $3, $4)', 
+                [a, face_id ,name_test,email_test], 
+                function(err, result) {
+                   
+                });
+     }
 
- for (var i = 50; i < 1050; i++) {
+     for (var i = 50; i < 1050; i++) {
         client.query(
             'INSERT into queries (timestamp, user_id, query, provider) VALUES($1, $2, $3, $4)', 
             [randomDate(new Date(2014, 6, 1), new Date()), i ,"airports","Google"], 
@@ -201,7 +199,7 @@ function randomDate(start, end) {
                 text: "SELECT COUNT (*) FROM queries WHERE query = $1 AND EXTRACT(month FROM 'timestamp') < $2 AND EXTRACT(month FROM 'timestamp' >$3);",
                 values: [type, e, d]
             }, function(err, result) {
-                    var stack_return{
+                    var stack_return = {
                         period: 'year'
                     }
                     client.query({
@@ -216,46 +214,6 @@ function randomDate(start, end) {
         }
        
         
-    });
-
-    app.get('/movies/:fb_id/:limit', function(req, res, next) {
-        var fb_id = req.params["fb_id"];
-        logQuery(fb_id, "movies", "Rotten Tomatoes");
-
-        var limit = req.params["limit"];
-        var rotten_params = {"country":"us", "limit":limit, "apikey":rotten_api_key };
-        
-        request({
-            url: rotten_url,
-            json: true,
-            qs: rotten_params
-        }, function (error, response, body) {
-            if (!error && response.statusCode === 200) {
-                //var entries = body["movies"]
-                movies = []
-                body["movies"].forEach(function(entry) {
-                    movies.push({ 
-                        name: entry.title,
-                        poster: entry.posters.thumbnail,
-                        runtime: entry.runtime,
-                        rating_mpaa: entry.mpaa_rating,
-                        rating_rotten: entry.ratings.critics_rating
-                    });
-                });
-                res.json(movies);
-            }
-        });
-        
-    });
-
- 
-    app.listen(80, function(){
-        logMessage('CORS-enabled web server listening on port 80');
-    });
-
-    http.listen(8081, function() {
-        logMessage('Dashboard websocket listening on *:8081');
-    });
 
 });
 
