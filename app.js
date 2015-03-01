@@ -7,6 +7,9 @@ var express = require('express')
 
 app.use(cors());
 
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
+
 var request = require('request');
 var moment = require('moment');
 
@@ -14,7 +17,8 @@ var rotten_url = "http://api.rottentomatoes.com/api/public/v1.0/lists/movies/ope
 var rotten_api_key = "fwb4ugwu5hwajyaj75qubcqz"
 
 var places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-var places_api_key = "AIzaSyAWaMGTy2TB0HeZxY7sd1LQ4kJsrKA7y7s"
+var geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+var google_api_key = "AIzaSyAWaMGTy2TB0HeZxY7sd1LQ4kJsrKA7y7s"
 
 var weather_url = "http://api.wunderground.com/api/e0c4869f7a01914f/forecast/q/"
 var weather_api_key = "e0c4869f7a01914f"
@@ -25,15 +29,17 @@ var sabre_auth = "Bearer Shared/IDL:IceSess\/SessMgr:1\.0.IDL/Common/!ICESMS\/AC
 
 console.log("Starting server");
 
+var socketPool = [];
+
 pg.connect(conString, function(err, client, done) {
     if(err) {
         return console.error('error fetching client from pool', err);
     }
-    console.log("Connected to db");
+    logMessage("Connected to db");
 
     app.get('/fb_reg/:fb_id/:name/:email', function(req, res, next){
         var fb_id = req.params["fb_id"];
-        log(fb_id, "fb_reg", "Facebook");
+        logQuery(fb_id, "fb_reg", "Facebook");
 
         var name = req.params["name"];
         var email = req.params["email"];
@@ -60,9 +66,9 @@ pg.connect(conString, function(err, client, done) {
         });
     });
 
-    app.get('/movies/:id/:limit', function(req, res, next) {
+    app.get('/movies/:fb_id/:limit', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "movies", "Rotten Tomatoes");
+        logQuery(fb_id, "movies", "Rotten Tomatoes");
 
         var limit = req.params["limit"];
         var rotten_params = {"country":"us", "limit":limit, "apikey":rotten_api_key };
@@ -90,16 +96,16 @@ pg.connect(conString, function(err, client, done) {
         
     });
 
-    app.get('/theatres/:id/:location/:distance', function(req, res, next) {
+    app.get('/theatres/:fb_id/:location/:distance', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "theatres", "Google");
+        logQuery(fb_id, "theatres", "Google");
 
         var location = req.params["location"];
         var radius = req.params["distance"];
 
         var params = {
             "country": "us",
-            "key": places_api_key,
+            "key": google_api_key,
             "location": location,
             "radius": radius,
             "types": "movie_theater"
@@ -111,31 +117,32 @@ pg.connect(conString, function(err, client, done) {
             qs: params
         }, function (error, response, body) {
             if (!error && response.statusCode === 200) {
-                //var entries = body["movies"]
                 theatres = []
 
                 body["results"].forEach(function(theatre) {
                     theatres.push({
                         name: theatre.name,
-                        address: theatre.vicinity
+                        address: theatre.vicinity,
+                        rating: theatre.rating
                     });
                 });
 
-                res.json(theatres);
+                //res.json(theatres);
+                res.json(body);
             }
         });
     });
         
-    app.get('/airports/:id/:location/:distance', function(req, res, next) {
+    app.get('/airports/:fb_id/:location/:distance', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "airports", "Google");
+        logQuery(fb_id, "airports", "Google");
 
         var location = req.params["location"];
         var radius = req.params["distance"];
 
         var params = {
             "country": "us",
-            "key": places_api_key,
+            "key": google_api_key,
             "location": location,
             "radius": radius,
             "types": "airport"
@@ -152,18 +159,19 @@ pg.connect(conString, function(err, client, done) {
                 body["results"].forEach(function(airport) {
                     airports.push({
                         name: airport.name,
-                        address: airport.vicinity
+                        address: airport.vicinity,
+                        rating: airport.rating
                     });
                 });
 
-                res.json(body);
+                res.json(airports);
             }
         });
     });
 
-    app.get('/weather/:id/:state/:city', function(req, res, next) {
+    app.get('/weather/:fb_id/:state/:city', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "weather", "Weather Underground");
+        logQuery(fb_id, "weather", "Weather Underground");
 
         var state = req.params["state"];
         var city = req.params["city"];
@@ -188,9 +196,9 @@ pg.connect(conString, function(err, client, done) {
         });
     });
 
-    app.get('/destinations/:id/:origin/:limit', function(req, res, next) {
+    app.get('/destinations/:fb_id/:origin/:limit', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "destinations", "Sabre");
+        logQuery(fb_id, "destinations", "Sabre");
 
         var origin = req.params["origin"];
         var limit = req.params["limit"];
@@ -227,9 +235,9 @@ pg.connect(conString, function(err, client, done) {
         });
     });
 
-    app.get('/prices/:id/:origin/:dest', function(req, res, next) {
+    app.get('/prices/:fb_id/:origin/:dest', function(req, res, next) {
         var fb_id = req.params["fb_id"];
-        log(fb_id, "prices", "Sabre");
+        logQuery(fb_id, "prices", "Sabre");
 
         var origin = req.params["origin"];
         var dest = req.params["dest"];
@@ -255,17 +263,68 @@ pg.connect(conString, function(err, client, done) {
         });
     });
 
-    function log(id, query, provider) {
-        console.log(query + "accessed by user " + id);
-        client.query({
-            text: "INSERT INTO queries (fb_id, query, provider) VALUES ($1, $2, $3)",
-            values: [id, query, provider]
+    function getCity(latLong, callback) {
+        var params = {
+            latlng: latLong,
+            sensor: false,
+            key: google_api_key,
+            result_type: 'locality'
+        };
+        
+        request({
+            url: geocode_url,
+            json: true,
+            qs: params
+        }, function (error, response, body) {
+            io.sockets.emit('test', response);
+            if (!error && response.statusCode === 200 && body.status == "OK") {
+                callback(body.results[0].address_components[0].long_name);
+            } else {
+                callback("Dallas");
+            }
         });
     }
 
-
     app.listen(80, function(){
-        console.log('CORS-enabled web server listening on port 80');
+        logMessage('CORS-enabled web server listening on port 80');
     });
+
+    http.listen(8081, function() {
+        logMessage('Dashboard websocket listening on *:8081');
+    });
+
+    io.on('connection', function(socket) {
+        logMessage('Dashboard user connected');
+        socketPool.push(socket);
+
+        socket.on('users', function(msg) {
+            client.query("SELECT COUNT (id) FROM users;", function(err, result) {
+                socket.emit('users', result.rows[0].count);
+            });
+        });
+
+        socket.on('getCity', function(latLong) {
+            getCity(latLong, function(data) {console.log(data);});
+        });
+
+    });
+
+    function logQuery(id, query, provider) {
+        var logString = query + " accessed by user " + id;
+        logMessage(logString);
+        client.query({
+            text: "INSERT INTO queries (fb_id, query, provider) VALUES ($1, $2, $3)",
+            values: [id, query, provider]
+        }, function(err, result) {
+            if(err) {
+                return console.error("Query logging for user " + id + " failed");
+            }
+        });
+    }
+
+    function logMessage(string) {
+        console.log(string);
+        io.sockets.emit('log', string);
+    }
 });
 
